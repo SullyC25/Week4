@@ -1,280 +1,134 @@
-# Assignment 4
-
-## Image Classification
-
-The first section covers the implementation of K-Means and GMM (Gaussian Mixture Models) on our downloaded Sentinel datasets.
-
-## Classifying Echoes in Leads and Sea Ice
-
-### Classification Steps
-
-- Preprocess the Sentinel-3 data to transform it into usable variables: peakiness, sigma 0, and stack standard deviation.
-```python
-from netCDF4 import Dataset
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.interpolate import griddata
-# from mpl_toolkits.basemap import Basemap
-import numpy.ma as ma
-import glob
-from matplotlib.patches import Polygon
-import scipy.spatial as spatial
-from scipy.spatial import KDTree
-
-import pyproj
-# import cartopy.crs as ccrs
-from sklearn.cluster import KMeans, DBSCAN
-from sklearn.preprocessing import StandardScaler,MinMaxScaler
-from sklearn.mixture import GaussianMixture
-from scipy.cluster.hierarchy import linkage, fcluster
-
-#=========================================================================================================
-#===================================  SUBFUNCTIONS  ======================================================
-#=========================================================================================================
-
-#*args and **kwargs allow you to pass an unspecified number of arguments to a function,
-#so when writing the function definition, you do not need to know how many arguments will be passed to your function
-#**kwargs allows you to pass keyworded variable length of arguments to a function.
-#You should use **kwargs if you want to handle named arguments in a function.
-#double star allows us to pass through keyword arguments (and any number of them).
-def peakiness(waves, **kwargs):
-
-    "finds peakiness of waveforms."
-
-    #print("Beginning peakiness")
-    # Kwargs are:
-    #          wf_plots. specify a number n: wf_plots=n, to show the first n waveform plots. \
-
-    import numpy as np
-    import matplotlib
-    import matplotlib.pyplot as plt
-    import time
+Coastal Monitoring Using Satellite Altimetry
 
-    print("Running peakiness function...")
+This repo documents my workflow for analyzing coastal sea level variability along Bangladesh using multi-mission satellite altimetry (Jason-3 & Sentinel-3 SRAL).
+The main goals are to:
 
-    size=np.shape(waves)[0] #.shape property is a tuple of length .ndim containing the length of each dimensions
-                            #Tuple of array dimensions.
+Subset and preprocess global SLA data for the Bangladesh coast.
 
-    waves1=np.copy(waves)
+Collocate Jason-3 and Sentinel-3 observations.
 
-    if waves1.ndim == 1: #number of array dimensions
-        print('only one waveform in file')
-        waves2=waves1.reshape(1,np.size(waves1)) #numpy.reshape(a, newshape, order='C'), a=array to be reshaped
-        waves1=waves2
+Interpolate SLA fields and validate cross-mission consistency.
 
-    # *args is used to send a non-keyworded variable length argument list to the function
-    def by_row(waves, *args):
-        "calculate peakiness for each waveform"
-        maximum=np.nanmax(waves)
-        if maximum > 0:
+Experiment with simple ML models and Gaussian Processes to map biases and coastal SLA structure.
 
-            maximum_bin=np.where(waves==maximum)
-            #print(maximum_bin)
-            maximum_bin=maximum_bin[0][0]
-            waves_128=waves[maximum_bin-50:maximum_bin+78]
+1. Preprocessing
 
-            waves=waves_128
+The starting point was the global CMEMS DUACS SLA dataset.
+Steps included:
 
-            noise_floor=np.nanmean(waves[10:20])
-            where_above_nf=np.where(waves > noise_floor)
+Subsetting to the region 88–93°E, 20–26°N (coastal Bangladesh).
 
-            if np.shape(where_above_nf)[1] > 0:
-                maximum=np.nanmax(waves[where_above_nf])
-                total=np.sum(waves[where_above_nf])
-                mean=np.nanmean(waves[where_above_nf])
-                peaky=maximum/mean
+Saving as a smaller NetCDF for repeat use.
 
-            else:
-                peaky = np.nan
-                maximum = np.nan
-                total = np.nan
+Quick plotting of the mean SLA field to check data quality.
 
-        else:
-            peaky = np.nan
-            maximum = np.nan
-            total = np.nan
+Why: keeps the workflow light and focused on the coast instead of the full global grid.
 
-        if 'maxs' in args:
-            return maximum
-        if 'totals' in args:
-            return total
-        if 'peaky' in args:
-            return peaky
+Output: processed_sla_2024_bangladesh.nc
 
-    peaky=np.apply_along_axis(by_row, 1, waves1, 'peaky') #numpy.apply_along_axis(func1d, axis, arr, *args, **kwargs)
+2. Sentinel-3 SRAL (20 Hz) Track Extraction
 
-    if 'wf_plots' in kwargs:
-        maximums=np.apply_along_axis(by_row, 1, waves1, 'maxs')
-        totals=np.apply_along_axis(by_row, 1, waves1, 'totals')
+I downloaded and processed raw Sentinel-3 SRAL tracks (20 Hz).
+Main steps:
 
-        for i in range(0,kwargs['wf_plots']):
-            if i == 0:
-                print("Plotting first "+str(kwargs['wf_plots'])+" waveforms")
+Subsetting the track data to the same region/time window.
 
-            plt.plot(waves1[i,:])#, a, col[i],label=label[i])
-            plt.axhline(maximums[i], color='green')
-            plt.axvline(10, color='r')
-            plt.axvline(19, color='r')
-            plt.xlabel('Bin (of 256)')
-            plt.ylabel('Power')
-            plt.text(5,maximums[i],"maximum="+str(maximums[i]))
-            plt.text(5,maximums[i]-2500,"total="+str(totals[i]))
-            plt.text(5,maximums[i]-5000,"peakiness="+str(peaky[i]))
-            plt.title('waveform '+str(i)+' of '+str(size)+'\n. Noise floor average taken between red lines.')
-            plt.show()
+Flattening the variables into a tidy table (lon, lat, time, SLA).
 
+Saving per-track files for easier handling later.
 
-    return peaky
+Why: Jason-3 is already along repeat ground tracks, so I needed to put SRAL data into a comparable form for collocation.
 
-#=========================================================================================================
-#=========================================================================================================
-#=========================================================================================================
+Output: flattened track files saved under /Preprocessing.
 
+3. Collocation (CollocationV3)
 
-def unpack_gpod(variable):
+Here I matched Jason-3 and Sentinel-3 observations in space and time.
 
-    from scipy.interpolate import interp1d
+Windows: 10 km / 24 h (default) so pairs are close enough to be comparable but still leave enough data.
 
-    time_1hz=SAR_data.variables['time_01'][:]
-    time_20hz=SAR_data.variables['time_20_ku'][:]
-    time_20hzC = SAR_data.variables['time_20_c'][:]
+QC filters: removed large |Δ| and flagged outliers to avoid spurious mismatches.
 
-    out=(SAR_data.variables[variable][:]).astype(float)  # convert from integer array to float.
+Bias correction: applied a daily median correction (S3 vs J3) rather than a global mean. This handles day-to-day offsets without distorting the seasonal signal.
 
-    #if ma.is_masked(dataset.variables[variable][:]) == True:
-    #print(variable,'is masked. Removing mask and replacing masked values with nan')
-    out=np.ma.filled(out, np.nan)
+Outputs:
 
-    if len(out)==len(time_1hz):
+s3_j3_pairs_baseline_qc.parquet — collocated pairs after QC.
 
-        print(variable,'is 1hz. Expanding to 20hz...')
-        out = interp1d(time_1hz,out,fill_value="extrapolate")(time_20hz)
+Summary CSVs with daily bias values and stats.
 
-    if len(out)==len(time_20hzC):
-        print(variable, 'is c band, expanding to 20hz ku band dimension')
-        out = interp1d(time_20hzC,out,fill_value="extrapolate")(time_20hz)
-    return out
+4. Interpolation & Analysis (InterpolationV2)
 
+This stage interpolated Sentinel-3 bias-corrected SLA fields to a regular grid and produced the main analysis figures.
 
-#=========================================================================================================
-#=========================================================================================================
-#=========================================================================================================
+Interpolation: radial basis function (thin-plate spline), smooth enough to handle coastal gradients.
 
-def calculate_SSD(RIP):
+Grid: 0.125° (matches DUACS resolution).
 
-    from scipy.optimize import curve_fit
-    from scipy import asarray as ar,exp
-    do_plot='Off'
+Validation: scatter plots, RMSE vs gap, residual maps, and seasonal cycles.
 
-    def gaussian(x,a,x0,sigma):
-            return a * np.exp(-(x - x0)**2 / (2 * sigma**2))
+Figures:
 
-    SSD=np.zeros(np.shape(RIP)[0])*np.nan
-    x=np.arange(np.shape(RIP)[1])
+Daily bias method comparison.
 
-    for i in range(np.shape(RIP)[0]):
+Scatter S3bc vs J3.
 
-        y=np.copy(RIP[i])
-        y[(np.isnan(y)==True)]=0
+RMSE vs collocation distance/time.
 
-        if 'popt' in locals():
-            del(popt,pcov)
+Spatial residual map.
 
-        SSD_calc=0.5*(np.sum(y**2)*np.sum(y**2)/np.sum(y**4))
-        #print('SSD calculated from equation',SSD)
+Daily maps (interpolated vs Jason-3).
 
-        #n = len(x)
-        mean_est = sum(x * y) / sum(y)
-        sigma_est = np.sqrt(sum(y * (x - mean_est)**2) / sum(y))
-        #print('est. mean',mean,'est. sigma',sigma_est)
+Seasonal SLA (monsoon vs rest).
 
-        try:
-            popt,pcov = curve_fit(gaussian, x, y, p0=[max(y), mean_est, sigma_est],maxfev=10000)
-        except RuntimeError as e:
-            print("Gaussian SSD curve-fit error: "+str(e))
-            #plt.plot(y)
-            #plt.show()
+stricter QC scatter for a “clean” check.
 
-        except TypeError as t:
-            print("Gaussian SSD curve-fit error: "+str(t))
+Outputs:
 
-        if do_plot=='ON':
+Gridded SLA: s3bc_interpolated_daily_rbf_baseline_qc.nc
 
-            plt.plot(x,y)
-            plt.plot(x,gaussian(x,*popt),'ro:',label='fit')
-            plt.axvline(popt[1])
-            plt.axvspan(popt[1]-popt[2], popt[1]+popt[2], alpha=0.15, color='Navy')
-            plt.show()
+Pair stats: daily_pair_stats_baseline_qc.csv, monthly_interp_pair_stats_baseline_qc.csv
 
-            print('popt',popt)
-            print('curve fit SSD',popt[2])
+Figures under /InterpolationV2/Figures
 
-        if 'popt' in locals():
-            SSD[i]=abs(popt[2])
+5. Machine Learning Experiments (ML)
 
+I tested two lightweight approaches to model biases and SLA fields:
 
-    return SSD
-```
+5.1 Ridge Regression Bias Maps
 
+Learned residual Δ = (S3bc − J3) using polynomial spatial terms + seasonal cycle.
 
-- Find the path to the data and shape it accordingly.
+GroupKFold by month to avoid data leakage.
 
-```python
-path = '/content/drive/MyDrive/Week_4-20240130T090303Z-001/Week_4/' # You need to specify the path
-SAR_file='S3B_SR_2_LAN_SI_20190301T231304_20190301T233006_20230405T162425_1021_022_301______LN3_R_NT_005.SEN3'
-print('overlapping SAR file is',SAR_file)
-SAR_data=Dataset(path + SAR_file+'/enhanced_measurement.nc')
+Produced a bias map for a target month (0.25° grid).
 
-SAR_lat, SAR_lon, waves, sig_0, RIP, flag = unpack_gpod('lat_20_ku'), unpack_gpod('lon_20_ku'), unpack_gpod('waveform_20_ku'),unpack_gpod('sig0_water_20_ku'),unpack_gpod('rip_20_ku'),unpack_gpod('surf_type_class_20_ku') #unpack_gpod('Sigma0_20Hz')
-SAR_index=np.arange(np.size(SAR_lat))
+Compared skill against a trivial monthly-mean baseline.
 
-find=np.where(SAR_lat >= -99999)#60
-SAR_lat=SAR_lat[find]
-SAR_lon=SAR_lon[find]
-SAR_index=SAR_index[find]
-waves=waves[find]
-sig_0=sig_0[find]
-RIP=RIP[find]
+Outputs:
 
-PP=peakiness(waves)
-SSD=calculate_SSD(RIP)
-sig_0_np = np.array(sig_0)  # Replace [...] with your data
-RIP_np = np.array(RIP)
-PP_np = np.array(PP)
-SSD_np = np.array(SSD)
+Bias map parquet + PNG scatter/map.
 
-data = np.column_stack((sig_0_np,PP_np, SSD_np))
-# Standardize the data
-scaler = StandardScaler()
-data_normalized = scaler.fit_transform(data)
-```
+JSON with model coefficients and settings.
 
-- Clean the data by removing NaN values.
+Metrics CSV with CV RMSE and skill score.
 
-```python
-nan_count = np.isnan(data_normalized).sum()
-print(f"Number of NaN values in the array: {nan_count}")
-data_cleaned = data_normalized[~np.isnan(data_normalized).any(axis=1)]
-flag_cleaned = flag[~np.isnan(data_normalized).any(axis=1)]
-```
+5.2 Gaussian Process “GPSat-style” Maps
 
-- Run the data through the GMM model.
+Tiled GP regressions (1° tiles, 0.5° overlap).
 
-```python
-gmm = GaussianMixture(n_components=2, random_state=0)
-gmm.fit(data_cleaned[(flag_cleaned==1)|(flag_cleaned==2)])
-clusters_gmm = gmm.predict(data_cleaned[(flag_cleaned==1)|(flag_cleaned==2)])
-```
-- Produce various plots of the waveforms to display the average echo shapes and standard deviations.
+Kernel: Const × RBF([60 km, 60 km, 1.5 d]) + White noise.
 
-![Aligned Waveform](https://github.com/SullyC25/images/blob/main/Aligned%20waveform.png?raw=true)
-![Average Waveform](https://github.com/SullyC25/images/blob/main/Average%20waveform.png?raw=true)
-![Standard Deviations](https://github.com/SullyC25/images/blob/main/Standard%20deviations.png?raw=true)
+Used inverse-variance blending to stitch tiles into a smooth field with uncertainty.
 
+High-res 0.05° daily maps (SLA mean + σ).
 
+Added a Bangladesh basemap overlay with city markers for context.
 
-#### Attempt at a Confusion Matrix
+Outputs:
 
-Below is an effort to structure the process and results into a clearer format, including an attempt at creating a confusion matrix to evaluate the model's performance.
+gpsat_style_map_<date>.parquet with mean/std/n_neighbors.
 
-![Confusion Matrix](https://github.com/SullyC25/images/blob/main/confusion%20matrix.png?raw=true)
+Figures: GP mean, uncertainty, and basemap overlay.
+
+Run log JSON with kernel and parameters.
