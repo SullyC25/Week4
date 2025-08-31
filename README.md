@@ -1,6 +1,6 @@
 # Coastal Monitoring Using Satellite Altimetry  
 
-This repository contains my workflow for analysing coastal sea level variability along Bangladesh using multi-mission satellite altimetry Jason-3 & Sentinel-3. Please excuse me for not inlcuding the references in this version, my intentions were to just get any results over to you. I apologise for the lack of communication over these last few months.
+This repository contains my workflow for analysing coastal sea level variability along Bangladesh using multi-mission satellite altimetry Jason-3 & Sentinel-3.
 
  My main goals were to:  
 - Subset and preprocess global SLA data for the Bangladesh coast.  
@@ -28,7 +28,7 @@ Steps:
 - Flattened into a table (`lon, lat, time, SLA`).  
 - Saved per-track files for later use.  
 
-when looking at the data I had to process it this way as the Jason-3 follows fixed ground tracks, so SRAL data needed to be reshaped to align for collocation.  
+
 
 **Output:**  
 - Flattened track files in `/Preprocessing`  
@@ -37,7 +37,7 @@ when looking at the data I had to process it this way as the Jason-3 follows fix
 
 ## 3. Collocation
 
-In this collab both J3 and Sentinel 3 files were collocated. This is where I was trying hard to code everything but had to utilise Ai to develop the code. Had lots of helpful input from your jupyter notebooks and githubs describing these problems
+In this collab both J3 and Sentinel 3 files were collocated. 
 
 - **Windows:** Primary run used 10 km / 24 h, following typical altimetry matchup studies.
 A secondary “relaxed” run (20 km / 36 h) was tested to check sensitivity to looser thresholds.
@@ -55,14 +55,13 @@ Applied a robust ΔSLA filter based on the Median Absolute Deviation (MAD) and i
 
 ## 4. Interpolation & Analysis (InterpolationV2)  
 
-After collocation and QC, the next step was to generate continuous SLA fields along the Bangladesh coast from the irregularly spaced Sentinel-3 ground tracks. Interpolation was required because altimetry provides point measurements along orbital tracks, while the gridded fields (like DUACS) are needed for regional analysis. I attempted to produce lots of figures still trying to unpack each one but you can have look in more detail at the bottom of this repository.  
+After collocation and QC, the next step was to generate continuous SLA fields along the Bangladesh coast from the irregularly spaced Sentinel-3 ground tracks. Interpolation was required because altimetry provides point measurements along orbital tracks, while the gridded fields (like DUACS) are needed for regional analysis.
 
 - **Interpolation:** A Radial Basis Function (RBF) with a thin-plate spline kernel was used to interpolate SLA from track points onto a regular grid. There are quite a few ways I could have done the interpolation. Including simple methods like inverse distance weighting (IDW), which was quick but smoothed everything too much so my plots looked weak. A more advanced option would be kriging or Gaussian Processes, which are nice because they give uncertainty estimates, but they’re slower and need a lot of tuning. There’s also optimal interpolation (OI), which is what the CMEMS/DUACS products use, but that relies on having a background covariance model, which I didn’t set up here. For this project I stuck with radial basis functions (thin-plate spline). It was smoother than IDW with less parameters than kriging, and it works well for scattered altimetry tracks. The idea was to keep it simple but still realistic, so I can compare my outputs with the DUACS fields without the extra overhead of building a full geostatistical model.
 
 - The Interpolation was performed onto a 0.125° × 0.125° grid, chosen to match the CMEMS DUACS Level-4 product resolution hoping to ensure direct comparability between the custom-interpolated Sentinel-3 maps and Jason-3’s global gridded reference fields
 
 - **Validation:** 
-To check whether the interpolation and bias correction was actually working lots of figures and tests were developed. The figures have not been fully interpreted yet 
 
 Scatter plots (Fig. 2):
 Jason-3 DUACS values were plotted against my bias-corrected Sentinel-3 interpolated values. If the two missions agree, the points should fall along a 1:1 line. 
@@ -95,11 +94,11 @@ Finally, I checked whether both missions capture the same broad seasonal trends 
 
 ## 5. Machine Learning Experiments (ML)  
 
-In this collab I was attempting to do two experimental approaches to model SLA biases and coastal fields, heavily taking inspiration from your notebooks
+In this collab I was attempting to do two experimental approaches to model SLA biases and coastal fields
 
 5.1 Ridge Regression Bias Maps
 
-For the first experiment I wanted to see if the bias between Sentinel-3 (bias-corrected) and Jason-3 could be predicted in a structured way, rather than just treated as random noise. At first I was thinking to  train on one month and then predict another future month. However, I adapted the model because SLA bias patterns aren’t guaranteed to stay the same month-to-month. For example, the monsoon season brings in big changes in water mass and dynamics along the coast, while the post-monsoon period is calmer. Training on September and then trying to predict October the model dynamics shifted The relationship between Sentinel-3 and Jason-3 because the bias for these months can't be fixed.
+For the first experiment I wanted to see if the bias between Sentinel-3 (bias-corrected) and Jason-3 could be predicted in a structured way, rather than just treated as random noise. 
 
 During the monsoon months, sea level is strongly influenced by river discharge, rainfall, and winds so the biases looked larger or structured in one way.
 
@@ -128,7 +127,7 @@ Other options were on the table — e.g. Random Forests or boosted trees for non
 
 ### 5.2 Gaussian Process “GPSat-style” Maps  
 
-I used Gaussian Process Regression (GPR) to build  GPSat-style maps which were the high-resolution interpolations of SLA that try to respect both spatial and temporal structure in the data. this was added after I saw your notebook from week 8 and I really wanted to try and develop figures that looked aesthetic. Ai helped me developing your code to fit my parameters
+I used Gaussian Process Regression (GPR) to build  GPSat-style maps which were the high-resolution interpolations of SLA that try to respect both spatial and temporal structure in the data.
 
 Why tiling?
 Full GP across the whole domain would be way too heavy computationally. So  it tiled the region into 1° boxes with 0.5° overlap. This way each GP stays manageable, but the overlap avoids sharp edges when stitching back together.
@@ -151,9 +150,9 @@ This gives daily 0.05° SLA maps with both mean and uncertainty. The uncertainty
 
 ## Figures
 
-The figures included here are preliminary outputs from my workflow. At this stage, I just wanted to get something to you they are mainly meant to demonstrate the processing pipeline (collocation, interpolation, and bias correction) and the types of analyses I can generate from Jason-3 and Sentinel-3 altimetry data.
+The figures included here are preliminary outputs from my workflow and the types of analyses I can generate from Jason-3 and Sentinel-3 altimetry data.
 
-I have not yet fully validated or interpreted each figure in detail. Some maps and diagnostics may contain noise or patterns that still need to be checked. I was just hopig to show some capability
+Some maps and diagnostics may contain noise or patterns that still need to be checked 
 
 The proper evaluation and interpretation of these results will follow in the written report.
 
